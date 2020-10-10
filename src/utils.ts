@@ -285,6 +285,38 @@ export function ensureProgram(instance: TSInstance) {
   return instance.program;
 }
 
+// ! PATCH: every tsconfig.json in a directory root is a module. this returns different programs for every module based on file path.
+export function ensureProgramFromFile(instance: TSInstance, filePath: string) {
+  console.log(
+    'ensureProgramFromFile: filesToCheckForErrors add (+)',
+    filePath.toString()
+  );
+  if (isInInstanceRoot(instance, filePath)) {
+    return ensureProgram(instance);
+  } else {
+    console.log('ensureProgramFromFile: File not in root!');
+    const rootDirectory = getModuleRoot(filePath);
+
+    const existing = instance.modulePrograms.get(rootDirectory);
+    if (existing) {
+      console.log('ensureProgramFromFile: (return from program module cache)');
+      return existing;
+    }
+
+    console.log(
+      'ensureProgramFromFile: Create a new program now for',
+      rootDirectory
+    );
+    const { options, fileNames } = getConfig(filePath);
+
+    const program = typescript.createProgram({ rootNames: fileNames, options });
+    instance.modulePrograms.set(rootDirectory, program);
+    console.log(rootDirectory, fileNames);
+    console.log(instance.modulePrograms.keys());
+    return program;
+  }
+}
+
 export function supportsSolutionBuild(instance: TSInstance) {
   return (
     !!instance.configFilePath &&
@@ -310,4 +342,68 @@ export function useCaseSensitiveFileNames(
   return loaderOptions.useCaseSensitiveFileNames !== undefined
     ? loaderOptions.useCaseSensitiveFileNames
     : compiler.sys.useCaseSensitiveFileNames;
+}
+
+export function getConfigPath(sourceFilePath: string) {
+  const configPath = typescript.findConfigFile(
+    path.dirname(sourceFilePath),
+    exists => fs.existsSync(exists)
+  );
+  if (!configPath)
+    throw new Error('Failed to find tsconfig.json for ' + sourceFilePath + '.');
+  return configPath;
+}
+
+export function getConfig(sourceFilePath: string) {
+  const configPath = getConfigPath(sourceFilePath);
+
+  const { config } = typescript.parseConfigFileTextToJson(
+    configPath,
+    fs.readFileSync(configPath).toString()
+  );
+  return typescript.parseJsonConfigFileContent(
+    config,
+    typescript.sys,
+    path.dirname(configPath)
+  );
+}
+
+/** Finds the root directory path as specified by the `rootDir` flag in the closest `tsconfig.json` to the source file. */
+export function getModuleRoot(sourceFilePath: string) {
+  const { rootDir } = getConfig(sourceFilePath).options;
+  return rootDir || path.dirname(sourceFilePath); // if none provided, fallback to sourceFilePath
+}
+
+/** Returns a boolean whether the file is in the same `rootDir` as the instance entry point. */
+export function isInInstanceRoot(
+  instance: TSInstance,
+  filePath: string
+): boolean {
+  const fileModuleRoot = getModuleRoot(filePath);
+  console.log(
+    'isFileInInstanceRoot?',
+    filePath,
+    fileModuleRoot,
+    instance.rootDirectory
+  );
+  if (!fileModuleRoot) return true; // if we couldn't determine a root for the file, just assume it's a member of root
+  if (!instance.rootDirectory) throw new Error('no instance.rootDirectory.');
+  return fileModuleRoot.indexOf(instance.rootDirectory) === 0;
+}
+
+export function getModuleRootFromInstance(instance: TSInstance) {
+  const {
+    rootDir,
+    sourceRoot,
+    configFilePath,
+    baseUrl,
+  } = instance.compilerOptions;
+  // try rootDir and baseUrl, fallback to using the configuration file.
+  const programRoot =
+    rootDir ||
+    baseUrl ||
+    (typeof configFilePath === 'string'
+      ? path.dirname(configFilePath)
+      : sourceRoot);
+  return programRoot;
 }

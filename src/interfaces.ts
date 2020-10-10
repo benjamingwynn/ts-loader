@@ -211,6 +211,12 @@ export interface TSInstance {
   initialSetupPending: boolean;
   configParseResult: typescript.ParsedCommandLine;
   log: logger.Logger;
+
+  /** Dependencies of this project as separate Typescript programs. The index of the map is the path to the root of the project. */
+  modulePrograms: Map<string, typescript.Program>;
+
+  /** The root directory of the files that are compiled by this instance. */
+  rootDirectory?: string;
 }
 
 export interface LoaderOptionsCache {

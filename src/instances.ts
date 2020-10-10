@@ -7,7 +7,7 @@ import * as webpack from 'webpack';
 import { makeAfterCompile } from './after-compile';
 import { getCompiler, getCompilerOptions } from './compilerSetup';
 import { getConfigFile, getConfigParseResult } from './config';
-import { dtsDtsxOrDtsDtsxMapRegex, EOL, tsTsxRegex } from './constants';
+import { /*dtsDtsxOrDtsDtsxMapRegex,*/ EOL, tsTsxRegex } from './constants';
 import {
   FilePathKey,
   LoaderOptions,
@@ -25,7 +25,9 @@ import {
 import {
   appendSuffixesIfMatch,
   ensureProgram,
+  ensureProgramFromFile,
   formatErrors,
+  getModuleRootFromInstance,
   isReferencedFile,
   makeError,
   supportsSolutionBuild,
@@ -216,6 +218,8 @@ function successfulTypeScriptInstance(
       configParseResult,
       log,
       filePathKeyMapper,
+      // ! PATCH: inset modulePrograms
+      modulePrograms: new Map(),
     };
     instances.set(loaderOptions.instance, transpileInstance);
     return { instance: transpileInstance };
@@ -224,11 +228,11 @@ function successfulTypeScriptInstance(
   // Load initial files (core lib files, any files specified in tsconfig.json)
   let normalizedFilePath: string;
   try {
+    // Load from loader.resourcePath (the entrypoint defined by Webpack) instead of the parsed config.
     const filesToLoad = loaderOptions.onlyCompileBundledFiles
-      ? configParseResult.fileNames.filter(fileName =>
-          dtsDtsxOrDtsDtsxMapRegex.test(fileName)
-        )
+      ? [loader.resourcePath]
       : configParseResult.fileNames;
+
     filesToLoad.forEach(filePath => {
       normalizedFilePath = path.normalize(filePath);
       files.set(filePathKeyMapper(normalizedFilePath), {
@@ -268,7 +272,11 @@ function successfulTypeScriptInstance(
     configParseResult,
     log,
     filePathKeyMapper,
+    // ! PATCH: inset modulePrograms
+    modulePrograms: new Map(),
   };
+
+  instance.rootDirectory = getModuleRootFromInstance(instance);
   instances.set(loaderOptions.instance, instance);
   return { instance };
 }
@@ -659,7 +667,7 @@ export function getInputFileNameFromOutput(
   if (instance.solutionBuilderHost) {
     return instance.solutionBuilderHost.getInputFileNameFromOutput(filePath);
   }
-  const program = ensureProgram(instance);
+  const program = ensureProgramFromFile(instance, filePath);
   return (
     program &&
     program.getResolvedProjectReferences &&
@@ -682,7 +690,9 @@ export function getInputFileNameFromOutput(
 }
 
 export function getEmitFromWatchHost(instance: TSInstance, filePath?: string) {
-  const program = ensureProgram(instance);
+  const program = filePath
+    ? ensureProgramFromFile(instance, filePath)
+    : ensureProgram(instance);
   const builderProgram = instance.builderProgram;
   if (builderProgram && program) {
     if (filePath) {
@@ -749,7 +759,7 @@ export function getEmitOutput(instance: TSInstance, filePath: string) {
       filePath
     );
   }
-  const program = ensureProgram(instance);
+  const program = ensureProgramFromFile(instance, filePath);
   if (program !== undefined) {
     const sourceFile = program.getSourceFile(filePath);
     const outputFiles: typescript.OutputFile[] = [];
